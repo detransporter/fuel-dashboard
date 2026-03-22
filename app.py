@@ -4,17 +4,11 @@ Brent Crude · WTI · Diesel · Jet Fuel
 """
 
 import streamlit as st
-import requests
+import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
-import os
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # dotenv optional on Streamlit Cloud
 
 st.set_page_config(page_title="Fuel Market Dashboard", page_icon="🛢️", layout="wide", initial_sidebar_state="expanded")
 
@@ -39,15 +33,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
-
 SERIES = {
-    "Brent Crude ($/fat)":           {"id": "DCOILBRENTEU",  "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
-    "WTI Crude ($/fat)":             {"id": "DCOILWTICO",    "unit": "$/fat", "color": "#3b82f6", "accent": "#3b82f6"},
-    "Diesel US ($/gallon)":          {"id": "GASDESW",       "unit": "$/gal", "color": "#8b5cf6", "accent": "#8b5cf6",
-                                      "fallback": "DDFUELUSGULF"},  # NY Harbor diesel if GASDESW fails
-    "Jet Fuel Gulf Coast ($/gallon)":{"id": "WJFUELUSGULF",  "unit": "$/gal", "color": "#06b6d4", "accent": "#06b6d4",
-                                      "fallback": "DJFUELUSGULF"},  # daily series as fallback
+    "Brent Crude ($/fat)":     {"ticker": "BZ=F", "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
+    "WTI Crude ($/fat)":       {"ticker": "CL=F", "unit": "$/fat", "color": "#3b82f6", "accent": "#3b82f6"},
+    "Diesel/ULSD ($/gallon)":  {"ticker": "HO=F", "unit": "$/gal", "color": "#8b5cf6", "accent": "#8b5cf6"},
+    "Gasoline RBOB ($/gallon)":{"ticker": "RB=F", "unit": "$/gal", "color": "#06b6d4", "accent": "#06b6d4"},
 }
 
 PERIODS = {
@@ -58,20 +48,14 @@ PERIODS = {
 }
 
 @st.cache_data(ttl=3600)
-def fetch_fred(series_id, start_date, api_key=""):
-    params = {"series_id": series_id, "observation_start": start_date, "file_type": "json", "sort_order": "asc",
-              "api_key": api_key}  # FRED allows requests without key for most public series
+def fetch_yfinance(ticker, start_date):
     try:
-        r = requests.get(FRED_BASE, params=params, timeout=10)
-        data = r.json()
-        if "observations" not in data:
+        hist = yf.Ticker(ticker).history(start=start_date)
+        if hist.empty:
             return None
-        df = pd.DataFrame(data["observations"])
-        df["date"] = pd.to_datetime(df["date"])
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-        df = df.dropna(subset=["value"])
-        df = df[["date", "value"]].set_index("date")
-        df = df.resample("D").last().ffill()   # fill weekend/holiday gaps
+        df = hist[["Close"]].rename(columns={"Close": "value"})
+        df.index = df.index.tz_localize(None)  # ta bort tidszon
+        df = df.resample("D").last().ffill()    # fyll helger/helgdagar
         return df
     except Exception:
         return None
@@ -99,14 +83,6 @@ def metric_card(label, value, unit, d1, d2, accent):
 with st.sidebar:
     st.markdown("## 🛢️ Fuel Dashboard")
     st.markdown("---")
-    # Hämtar nyckeln från miljövariabel (.env lokalt) eller Streamlit Cloud Secrets
-    api_key = os.getenv("FRED_API_KEY", "")
-    if not api_key:
-        try:
-            api_key = st.secrets.get("FRED_API_KEY", "")
-        except Exception:
-            api_key = ""  # Ingen secrets.toml — fortsätter utan nyckel
-    st.markdown("---")
     st.markdown("<div style='font-family:DM Mono,monospace;font-size:11px;color:#4a6fa5;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px'>Tidsperiod</div>", unsafe_allow_html=True)
 
     pkeys = list(PERIODS.keys())
@@ -123,22 +99,20 @@ with st.sidebar:
     show_corr = st.checkbox("Visa korrelationsmatris", value=True)
     show_vol  = st.checkbox("Visa volatilitet (30d rullande)", value=True)
     st.markdown("---")
-    st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:11px;color:#4a6fa5;line-height:1.8'>Datakälla: FRED · EIA · IATA<br>Uppdateras: 1h<br>Senast: {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-family:DM Mono,monospace;font-size:11px;color:#4a6fa5;line-height:1.8'>Datakälla: Yahoo Finance · yfinance<br>Uppdateras: 1h<br>Senast: {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>", unsafe_allow_html=True)
 
 # ── Header ───────────────────────────────────────────────────────────────────
-st.markdown(f"<h1 style='margin-bottom:4px'>Fuel Market Dashboard</h1><div style='font-family:DM Mono,monospace;font-size:12px;color:#4a6fa5;margin-bottom:24px'>BRENT · WTI · DIESEL · JET FUEL — VY: {pcfg['label'].upper()}</div>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='margin-bottom:4px'>Fuel Market Dashboard</h1><div style='font-family:DM Mono,monospace;font-size:12px;color:#4a6fa5;margin-bottom:24px'>BRENT · WTI · DIESEL/ULSD · GASOLINE RBOB — VY: {pcfg['label'].upper()}</div>", unsafe_allow_html=True)
 st.markdown("<div class='alert-box'>⚠️ <strong>MARS 2026:</strong> Hormuzsundet stängt sedan 28 feb. Brent +50% YTD · Diesel +44% sedan jan · Jet fuel +11% v/v. IEA frigjorde 400 Mb från strategiska reserver.</div>", unsafe_allow_html=True)
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
 full_store: dict = {}
 disp_store: dict = {}
 
-with st.spinner("Hämtar data från FRED..."):
+with st.spinner("Hämtar data från Yahoo Finance..."):
     for name in selected:
         meta = SERIES[name]
-        df = fetch_fred(meta["id"], start_fetch, api_key)
-        if (df is None or df.empty) and "fallback" in meta:
-            df = fetch_fred(meta["fallback"], start_fetch, api_key)
+        df = fetch_yfinance(meta["ticker"], start_fetch)
         if df is not None and not df.empty:
             full_store[name] = df
             disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
@@ -149,10 +123,10 @@ if not full_store:
     dates = pd.date_range(start=(datetime.today()-timedelta(days=365)).strftime("%Y-%m-%d"), end=datetime.today(), freq="B")
     n = len(dates)
     fp = {
-        "Brent Crude ($/fat)":           {"s":62, "e":94,   "v":0.018},
-        "WTI Crude ($/fat)":             {"s":59, "e":91,   "v":0.019},
-        "Diesel US ($/gallon)":          {"s":3.53,"e":5.07,"v":0.012},
-        "Jet Fuel Gulf Coast ($/gallon)":{"s":2.20,"e":3.80,"v":0.015},
+        "Brent Crude ($/fat)":     {"s":62,   "e":94,   "v":0.018},
+        "WTI Crude ($/fat)":       {"s":59,   "e":91,   "v":0.019},
+        "Diesel/ULSD ($/gallon)":  {"s":3.53, "e":5.07, "v":0.012},
+        "Gasoline RBOB ($/gallon)":{"s":2.10, "e":3.20, "v":0.015},
     }
     for name in selected:
         if name in fp:
@@ -269,4 +243,4 @@ with st.expander("📊 Rådata (vald period)"):
     if not raw.empty:
         st.dataframe(raw.tail(50).style.format("{:.2f}").background_gradient(cmap="YlOrRd", axis=0), use_container_width=True)
 
-st.markdown(f"<hr style='border-color:#1a2540;margin-top:40px'><div style='font-family:DM Mono,monospace;font-size:11px;color:#2d3f5f;text-align:center;padding:16px'>Datakälla: FRED · EIA · IATA · IEA — SCM International · {datetime.now().strftime('%Y')}</div>", unsafe_allow_html=True)
+st.markdown(f"<hr style='border-color:#1a2540;margin-top:40px'><div style='font-family:DM Mono,monospace;font-size:11px;color:#2d3f5f;text-align:center;padding:16px'>Datakälla: Yahoo Finance · yfinance — SCM International · {datetime.now().strftime('%Y')}</div>", unsafe_allow_html=True)
