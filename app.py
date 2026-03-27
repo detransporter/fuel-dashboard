@@ -34,7 +34,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 SERIES = {
-    "Brent Crude ($/fat)":     {"ticker": "BZ=F", "fallback": "BNO", "fallback_scale": 10.0, "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
+    "Brent Crude ($/fat)":     {"ticker": "BZ=F", "fallback": "BRN=F", "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
     "WTI Crude ($/fat)":       {"ticker": "CL=F", "unit": "$/fat", "color": "#3b82f6", "accent": "#3b82f6"},
     "Diesel/ULSD ($/gallon)":  {"ticker": "HO=F", "unit": "$/gal", "color": "#8b5cf6", "accent": "#8b5cf6"},
     "Gasoline RBOB ($/gallon)":{"ticker": "RB=F", "unit": "$/gal", "color": "#06b6d4", "accent": "#06b6d4"},
@@ -125,9 +125,7 @@ with st.spinner("Hämtar data från Yahoo Finance..."):
         # Try fallback ticker if primary fails
         if (df is None or df.empty) and "fallback" in meta:
             df = fetch_yfinance(meta["fallback"], start_fetch)
-            if df is not None and not df.empty and "fallback_scale" in meta:
-                df = df * meta["fallback_scale"]
-        if df is not None and not df.empty:
+            if df is not None and not df.empty:
             full_store[name] = df
             disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
 
