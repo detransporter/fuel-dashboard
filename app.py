@@ -34,10 +34,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 SERIES = {
-    "Brent Crude ($/fat)":     {"ticker": "BZ=F", "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
+    "Brent Crude ($/fat)":     {"ticker": "BZ=F", "fallback": "BNO", "fallback_scale": 10.0, "unit": "$/fat", "color": "#f59e0b", "accent": "#f59e0b"},
     "WTI Crude ($/fat)":       {"ticker": "CL=F", "unit": "$/fat", "color": "#3b82f6", "accent": "#3b82f6"},
     "Diesel/ULSD ($/gallon)":  {"ticker": "HO=F", "unit": "$/gal", "color": "#8b5cf6", "accent": "#8b5cf6"},
     "Gasoline RBOB ($/gallon)":{"ticker": "RB=F", "unit": "$/gal", "color": "#06b6d4", "accent": "#06b6d4"},
+}
+
+SIM_PARAMS = {
+    "Brent Crude ($/fat)":     {"s": 62,   "e": 94,   "v": 0.018},
+    "WTI Crude ($/fat)":       {"s": 59,   "e": 91,   "v": 0.019},
+    "Diesel/ULSD ($/gallon)":  {"s": 3.53, "e": 5.07, "v": 0.012},
+    "Gasoline RBOB ($/gallon)":{"s": 2.10, "e": 3.20, "v": 0.015},
 }
 
 PERIODS = {
@@ -109,36 +116,41 @@ st.markdown("<div class='alert-box'>⚠️ <strong>MARS 2026:</strong> Hormuzsun
 full_store: dict = {}
 disp_store: dict = {}
 
+simulated_names = []
+
 with st.spinner("Hämtar data från Yahoo Finance..."):
     for name in selected:
         meta = SERIES[name]
         df = fetch_yfinance(meta["ticker"], start_fetch)
+        # Try fallback ticker if primary fails
+        if (df is None or df.empty) and "fallback" in meta:
+            df = fetch_yfinance(meta["fallback"], start_fetch)
+            if df is not None and not df.empty and "fallback_scale" in meta:
+                df = df * meta["fallback_scale"]
         if df is not None and not df.empty:
             full_store[name] = df
             disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
 
-if not full_store:
-    st.warning("**Visar simulerad data** baserad på verkliga marknadsnivåer. Kontakta administratören för live-data.")
-    np.random.seed(42)
-    dates = pd.date_range(start=(datetime.today()-timedelta(days=365)).strftime("%Y-%m-%d"), end=datetime.today(), freq="B")
-    n = len(dates)
-    fp = {
-        "Brent Crude ($/fat)":     {"s":62,   "e":94,   "v":0.018},
-        "WTI Crude ($/fat)":       {"s":59,   "e":91,   "v":0.019},
-        "Diesel/ULSD ($/gallon)":  {"s":3.53, "e":5.07, "v":0.012},
-        "Gasoline RBOB ($/gallon)":{"s":2.10, "e":3.20, "v":0.015},
-    }
-    for name in selected:
-        if name in fp:
-            p = fp[name]
-            t = np.linspace(p["s"], p["e"], n)
-            noise = np.cumsum(np.random.normal(0, p["v"], n)) * p["s"]
-            vals = t + noise * 0.3
-            sp = max(0, n-18)
-            vals[sp:] *= np.linspace(1.0, 1.12, n-sp)
-            df = pd.DataFrame({"value": vals}, index=dates)
-            full_store[name] = df
-            disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
+# Per-instrument simulated fallback for any that still failed
+np.random.seed(42)
+sim_dates = pd.date_range(start=(datetime.today()-timedelta(days=365)).strftime("%Y-%m-%d"), end=datetime.today(), freq="B")
+n = len(sim_dates)
+
+for name in selected:
+    if name not in full_store and name in SIM_PARAMS:
+        p = SIM_PARAMS[name]
+        t = np.linspace(p["s"], p["e"], n)
+        noise = np.cumsum(np.random.normal(0, p["v"], n)) * p["s"]
+        vals = t + noise * 0.3
+        sp = max(0, n-18)
+        vals[sp:] *= np.linspace(1.0, 1.12, n-sp)
+        df = pd.DataFrame({"value": vals}, index=sim_dates)
+        full_store[name] = df
+        disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
+        simulated_names.append(name)
+
+if simulated_names:
+    st.warning(f"**Visar simulerad data** för: {', '.join(simulated_names)}. Live-hämtning misslyckades temporärt.")
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-header">Senaste priser</div>', unsafe_allow_html=True)
