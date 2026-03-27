@@ -7,6 +7,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 from datetime import datetime, timedelta
 import numpy as np
 
@@ -61,9 +62,33 @@ def fetch_yfinance(ticker, start_date):
         if hist.empty:
             return None
         df = hist[["Close"]].rename(columns={"Close": "value"})
-        df.index = df.index.tz_localize(None)  # ta bort tidszon
-        df = df.resample("D").last().ffill()    # fyll helger/helgdagar
+        df.index = df.index.tz_localize(None)
+        df = df.resample("D").last().ffill()
         return df
+    except Exception:
+        return None
+
+@st.cache_data(ttl=3600)
+def fetch_fred_brent(api_key, start_date):
+    try:
+        r = requests.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={
+                "series_id": "DCOILBRENTEU",
+                "observation_start": start_date,
+                "api_key": api_key,
+                "file_type": "json",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        obs = r.json().get("observations", [])
+        df = pd.DataFrame(obs)[["date", "value"]]
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df = df.dropna(subset=["value"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").resample("D").last().ffill()
+        return df if not df.empty else None
     except Exception:
         return None
 
@@ -118,14 +143,24 @@ disp_store: dict = {}
 
 simulated_names = []
 
-with st.spinner("Hämtar data från Yahoo Finance..."):
+fred_api_key = st.secrets.get("FRED_API_KEY", "")
+
+with st.spinner("Hämtar data..."):
     for name in selected:
         meta = SERIES[name]
-        df = fetch_yfinance(meta["ticker"], start_fetch)
-        # Try fallback ticker if primary fails
+        df = None
+
+        # Brent: FRED primär, yfinance fallback
+        if name == "Brent Crude ($/fat)" and fred_api_key:
+            df = fetch_fred_brent(fred_api_key, start_fetch)
+
+        # Övriga (och Brent-fallback): yfinance
+        if df is None or df.empty:
+            df = fetch_yfinance(meta["ticker"], start_fetch)
         if (df is None or df.empty) and "fallback" in meta:
             df = fetch_yfinance(meta["fallback"], start_fetch)
-            if df is not None and not df.empty:
+
+        if df is not None and not df.empty:
             full_store[name] = df
             disp_store[name] = df[df.index >= pd.to_datetime(start_display)]
 
